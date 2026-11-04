@@ -113,13 +113,18 @@ function getModel(a, b) {
   const id = `Xenova/opus-mt-${a}-${b}`;
   if (!cache[id]) {
     cache[id] = pipeline("translation", id, {
+      device: navigator.gpu ? "webgpu" : "wasm",
       progress_callback: p => {
         if (p.status === "progress" && p.total) {
           prog.hidden = false; prog.value = p.progress;
           setStatus(`Загружаю модель ${a}→${b}: ${Math.round(p.progress)}%`);
         }
       }
-    }).catch(e => { delete cache[id]; throw e; });
+    }).then(async m => { // проверка, что видеокарта реально справилась
+      try { await m("ok"); return m; }
+      catch { return pipeline("translation", id, { device: "wasm" }); }
+    }).catch(() => pipeline("translation", id, { device: "wasm" }))
+      .catch(e => { delete cache[id]; throw e; });
   }
   return cache[id];
 }
@@ -130,19 +135,19 @@ function chunks(text) {
     line.trim() ? (line.match(/[^.!?…]+[.!?…]*\s*/g) || [line]) : [""]);
 }
 
+// перевод всех предложений одним пакетом + кеш уже переведённых
+const done = new Map();
 async function translateStep(text, a, b) {
   const model = await getModel(a, b);
-  const lines = chunks(text), res = [];
-  for (const parts of lines) {
-    const out = [];
-    for (const p of parts) {
-      if (!p.trim()) { out.push(p); continue; }
-      const r = await model(p.trim(), { max_new_tokens: 512 });
-      out.push(r[0].translation_text);
-    }
-    res.push(out.join(" "));
+  const lines = chunks(text);
+  const key = s => `${a}|${b}|${s}`;
+  const todo = [...new Set(lines.flat().map(s => s.trim()).filter(s => s && !done.has(key(s))))];
+  for (let i = 0; i < todo.length; i += 8) {
+    const batch = todo.slice(i, i + 8);
+    const r = await model(batch, { max_new_tokens: 256 });
+    batch.forEach((s, j) => done.set(key(s), r[j].translation_text));
   }
-  return res.join("\n");
+  return lines.map(parts => parts.map(p => p.trim() ? done.get(key(p.trim())) : "").join(" ")).join("\n");
 }
 
 let busy = false, again = false;
@@ -174,7 +179,7 @@ async function translate() {
 }
 
 let timer;
-input.addEventListener("input", () => { updCount(); clearTimeout(timer); timer = setTimeout(translate, 900); });
+input.addEventListener("input", () => { updCount(); clearTimeout(timer); timer = setTimeout(translate, 500); });
 $("go").onclick = translate;
 src.onchange = tgt.onchange = translate;
 $("swap").onclick = () => {
