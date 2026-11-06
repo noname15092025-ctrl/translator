@@ -56,6 +56,9 @@ textarea,.out{font:400 21px/1.55 var(--ui);color:var(--fg);background:transparen
   min-height:300px;padding:22px 24px;width:100%;white-space:pre-wrap;overflow-wrap:anywhere;flex:1}
 textarea::placeholder{color:var(--muted)}
 textarea:focus{outline:none}
+.out{cursor:copy;transition:background .3s}
+.out.flash{background:var(--soft)}
+.out:empty{cursor:default}
 .out:empty::before{content:"Здесь появится перевод";color:var(--muted)}
 .foot{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:space-between;
   padding:10px 14px;font-size:13px;color:var(--muted)}
@@ -318,6 +321,13 @@ $("swap").onclick = () => {
   updCount(); translate(true);
 };
 $("clear").onclick = () => { input.value = ""; output.textContent = ""; updCount(); input.focus(); };
+// клик по переводу копирует его (если не выделяли часть текста мышкой)
+output.title = "Нажмите, чтобы скопировать";
+output.addEventListener("click", () => {
+  if (!output.textContent.trim() || String(getSelection()).length) return;
+  $("copy").onclick();
+  output.classList.add("flash"); setTimeout(() => output.classList.remove("flash"), 600);
+});
 $("copy").onclick = async () => {
   try { await navigator.clipboard.writeText(output.textContent); setStatus("Скопировано"); $("copy").textContent = "Скопировано ✓"; setTimeout(() => $("copy").textContent = "Копировать", 1500); }
   catch { const r = document.createRange(); r.selectNodeContents(output);
