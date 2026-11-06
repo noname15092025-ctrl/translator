@@ -94,20 +94,25 @@ progress{width:160px;accent-color:var(--accent)}
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
 <script type="module">
 // язык: [название, код для распознавания картинок]
-const LANGS = { auto:["Определить язык","rus+eng"], ru:["Русский","rus"], en:["English","eng"],
-  be:["Беларуская","bel"], uk:["Українська","ukr"], pl:["Polski","pol"], de:["Deutsch","deu"],
-  fr:["Français","fra"], es:["Español","spa"], it:["Italiano","ita"], pt:["Português","por"],
-  tr:["Türkçe","tur"], zh:["中文","chi_sim"], ja:["日本語","jpn"], ko:["한국어","kor"], ar:["العربية","ara"] };
+const LANGS = { ru:["Русский","rus"], en:["English","eng"] };
 const MAX = 5000;
 const $ = id => document.getElementById(id);
 const src = $("src"), tgt = $("tgt"), input = $("input"), output = $("output"),
       status = $("status"), prog = $("prog");
 
 for (const [code,[name]] of Object.entries(LANGS)) {
-  src.add(new Option(name, code));
-  if (code !== "auto") tgt.add(new Option(name, code));
+  src.add(new Option(name, code)); tgt.add(new Option(name, code));
 }
-src.value = "auto"; tgt.value = "en";
+src.value = "ru"; tgt.value = "en";
+// языков два, поэтому второй список всегда противоположен первому
+const other = l => l === "ru" ? "en" : "ru";
+// направление само подстраивается под текст: есть кириллица → с русского
+function autoDirection() {
+  const t = input.value, cyr = (t.match(/[а-яё]/gi) || []).length, lat = (t.match(/[a-z]/gi) || []).length;
+  if (!cyr && !lat) return;
+  const from = cyr >= lat ? "ru" : "en";
+  if (src.value !== from) { src.value = from; tgt.value = other(from); }
+}
 
 const setStatus = (t, warn=false) => { status.textContent = t; status.classList.toggle("warn", warn); };
 const updCount = () => { $("count").textContent = `${input.value.length} / ${MAX}`; };
@@ -199,6 +204,7 @@ async function translate(manual = false) {
   const useAi = $("mode").value === "ai";
   if (useAi && !manual) { setStatus("Нажмите «Перевести» или Ctrl+Enter"); return; }
   aiNote = "";
+  autoDirection();
   const text = input.value.slice(0, MAX).trim();
   const a = src.value, b = tgt.value;
   if (!text) { output.textContent = ""; return; }
@@ -229,9 +235,10 @@ $("go").onclick = () => translate(true);
 input.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); translate(true); } });
 $("mode").onchange = () => { try { localStorage.mode = $("mode").value; } catch {} ; translate(true); };
 try { if (localStorage.mode) $("mode").value = localStorage.mode; } catch {}
-src.onchange = tgt.onchange = () => translate();
+src.onchange = () => { tgt.value = other(src.value); translate(); };
+tgt.onchange = () => { src.value = other(tgt.value); translate(); };
 $("swap").onclick = () => {
-  const from = src.value === "auto" ? (lastLang && LANGS[lastLang] ? lastLang : "ru") : src.value;
+  const from = src.value;
   src.value = tgt.value; tgt.value = from;
   if (output.textContent) input.value = output.textContent;
   updCount(); translate(true);
@@ -249,7 +256,7 @@ async function ocr(file) {
   try {
     setStatus("Распознаю текст на картинке…");
     prog.hidden = false; prog.value = 0;
-    const langs = [...new Set([...LANGS[src.value][1].split("+"), "eng"])].join("+");
+    const langs = "rus+eng";
     const { data } = await Tesseract.recognize(file, langs, {
       logger: m => { if (m.progress != null) { prog.value = m.progress * 100;
         setStatus(m.status === "recognizing text" ? `Распознаю: ${Math.round(m.progress*100)}%` : "Готовлю распознавание…"); } }
