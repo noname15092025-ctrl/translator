@@ -57,6 +57,10 @@ progress{width:160px;accent-color:var(--accent)}
     <select id="src" aria-label="Язык оригинала"></select>
     <button id="swap" title="Поменять языки">⇄</button>
     <select id="tgt" aria-label="Язык перевода"></select>
+    <select id="mode" aria-label="Кто переводит">
+      <option value="ai">Переводит ИИ</option>
+      <option value="fast">Быстрый (Google)</option>
+    </select>
     <button id="go" class="primary">Перевести</button>
   </div>
 
@@ -84,7 +88,7 @@ progress{width:160px;accent-color:var(--accent)}
   <div class="status" id="status"></div>
   <progress id="prog" max="100" value="0" hidden></progress>
 
-  <p class="note">Текст переводится онлайн через Google Translate, при сбое через MyMemory, поэтому нужен интернет. Текст с картинок распознаётся прямо в браузере.</p>
+  <p class="note">В режиме «Переводит ИИ» текст переводит нейросеть через бесплатный сервис Pollinations: качественно, но не чаще раза в 45 секунд, остальное время подстраховывает Google. Режим «Быстрый» переводит сразу при наборе. Текст с картинок распознаётся прямо в браузере.</p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
@@ -142,11 +146,42 @@ async function mymemory(text, a, b) {
   return { text: res.join(" ") };
 }
 
+// ---------- ИИ ----------
+let aiFreeAt = 0; // когда снова можно звать ИИ (лимит бесплатного режима)
+async function ai(text, a, b) {
+  const to = LANGS[b][0], from = a === "auto" ? "" : ` from ${LANGS[a][0]}`;
+  const r = await fetch("https://text.pollinations.ai/openai", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "openai", messages: [
+      { role: "system", content: `You are a professional translator. Translate the user's text${from} into ${to}. Keep meaning, tone, line breaks and formatting. Output only the translation, no comments.` },
+      { role: "user", content: text } ] })
+  });
+  if (r.status === 402 || r.status === 429) {
+    const m = (await r.text()).match(/wait (\d+) sec/);
+    aiFreeAt = Date.now() + (m ? +m[1] : 45) * 1000;
+    throw new Error("limit");
+  }
+  if (!r.ok) throw new Error("ai " + r.status);
+  const d = await r.json();
+  const out = d.choices?.[0]?.message?.content?.trim();
+  if (!out) throw new Error("ai empty");
+  aiFreeAt = Date.now() + 45000;
+  return { text: out, by: "ИИ" };
+}
+
 const done = new Map();
-async function translateStep(text, a, b) {
-  const key = `${a}|${b}|${text}`;
+async function translateStep(text, a, b, useAi) {
+  const key = `${useAi ? "ai" : "g"}|${a}|${b}|${text}`;
   if (done.has(key)) return done.get(key);
   let res;
+  if (useAi) {
+    if (Date.now() >= aiFreeAt) {
+      try { res = await ai(text, a, b); done.set(key, res); return res; }
+      catch (e) { console.warn(e); }
+    }
+    const sec = Math.max(1, Math.ceil((aiFreeAt - Date.now()) / 1000));
+    aiNote = `ИИ будет доступен через ${sec} с, пока перевёл Google`;
+  }
   try {
     const parts = await Promise.all(pieces(text).map(p => google(p, a, b)));
     res = { text: parts.map(p => p.text).join(""), lang: parts[0].lang };
@@ -159,7 +194,11 @@ async function translateStep(text, a, b) {
 }
 
 let busy = false, again = false, lastLang = null;
-async function translate() {
+let aiNote = "";
+async function translate(manual = false) {
+  const useAi = $("mode").value === "ai";
+  if (useAi && !manual) { setStatus("Нажмите «Перевести» или Ctrl+Enter"); return; }
+  aiNote = "";
   const text = input.value.slice(0, MAX).trim();
   const a = src.value, b = tgt.value;
   if (!text) { output.textContent = ""; return; }
@@ -168,30 +207,34 @@ async function translate() {
   busy = true;
   try {
     setStatus("Перевожу…");
-    const r = await translateStep(text, a, b);
+    setStatus(useAi && Date.now() >= aiFreeAt ? "ИИ переводит…" : "Перевожу…");
+    const r = await translateStep(text, a, b, useAi);
     lastLang = r.lang || null;
     if (a === "auto" && r.lang && LANGS[r.lang]) $("engine").textContent = "Язык оригинала: " + LANGS[r.lang][0];
-    else $("engine").textContent = "Перевод онлайн";
+    else $("engine").textContent = r.by === "ИИ" ? "Перевёл ИИ" : "Перевёл Google";
     output.textContent = r.text;
-    setStatus("Готово");
+    setStatus(aiNote || "Готово", !!aiNote);
   } catch (e) {
     console.error(e);
     setStatus("Не удалось перевести. Проверьте интернет и попробуйте ещё раз.", true);
   } finally {
     prog.hidden = true; busy = false;
-    if (again) { again = false; translate(); }
+    if (again) { again = false; translate(manual); }
   }
 }
 
 let timer;
 input.addEventListener("input", () => { updCount(); clearTimeout(timer); timer = setTimeout(translate, 400); });
-$("go").onclick = translate;
-src.onchange = tgt.onchange = translate;
+$("go").onclick = () => translate(true);
+input.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); translate(true); } });
+$("mode").onchange = () => { try { localStorage.mode = $("mode").value; } catch {} ; translate(true); };
+try { if (localStorage.mode) $("mode").value = localStorage.mode; } catch {}
+src.onchange = tgt.onchange = () => translate();
 $("swap").onclick = () => {
   const from = src.value === "auto" ? (lastLang && LANGS[lastLang] ? lastLang : "ru") : src.value;
   src.value = tgt.value; tgt.value = from;
   if (output.textContent) input.value = output.textContent;
-  updCount(); translate();
+  updCount(); translate(true);
 };
 $("clear").onclick = () => { input.value = ""; output.textContent = ""; updCount(); input.focus(); };
 $("copy").onclick = async () => {
@@ -215,7 +258,7 @@ async function ocr(file) {
     if (!text) { setStatus("На картинке не нашлось текста", true); prog.hidden = true; return; }
     input.value = text; updCount();
     prog.hidden = true;
-    translate();
+    translate(true);
   } catch (e) {
     console.error(e); prog.hidden = true;
     setStatus("Не удалось распознать картинку", true);
