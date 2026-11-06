@@ -272,8 +272,19 @@ async function translate(manual = false) {
   busy = true;
   try {
     setStatus("Перевожу…");
-    setStatus(useAi && Date.now() >= aiFreeAt ? "ИИ переводит…" : "Перевожу…");
+    // в режиме ИИ сначала мгновенно показываем черновик от Google, потом заменяем ИИ-переводом
+    if (useAi && !done.has(`ai|${a}|${b}|${text}`)) {
+      try {
+        const draft = await translateStep(text, a, b, false);
+        if (input.value.slice(0, MAX).trim() === text) {
+          output.textContent = draft.text;
+          $("engine").textContent = "Черновик Google";
+          setStatus("ИИ уточняет перевод…");
+        }
+      } catch (e) { console.warn(e); }
+    }
     const r = await translateStep(text, a, b, useAi);
+    if (input.value.slice(0, MAX).trim() !== text) return; // текст уже поменяли, ждём новый перевод
     lastLang = r.lang || null;
     if (a === "auto" && r.lang && LANGS[r.lang]) $("engine").textContent = "Язык оригинала: " + LANGS[r.lang][0];
     else $("engine").textContent = r.by === "ИИ" ? "Перевёл ИИ" : "Перевёл Google";
@@ -289,7 +300,7 @@ async function translate(manual = false) {
 }
 
 let timer;
-input.addEventListener("input", () => { updCount(); clearTimeout(timer); timer = setTimeout(translate, $("mode").value === "ai" ? 1000 : 400); });
+input.addEventListener("input", () => { updCount(); clearTimeout(timer); timer = setTimeout(translate, $("mode").value === "ai" ? 600 : 350); });
 $("go").onclick = () => translate(true);
 input.addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); translate(true); } });
 $("mode").onchange = () => { try { localStorage.mode = $("mode").value; } catch {} ; translate(true); };

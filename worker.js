@@ -7,11 +7,12 @@ const PER_MINUTE = 6; // сколько переводов в минуту мо�
 
 // бесплатные модели пробуются по очереди: если одна недоступна, берётся следующая
 const MODELS = [
+  "google/gemma-4-26b-a4b-it:free", // самая быстрая из хороших бесплатных
   "google/gemma-4-31b-it:free",
   "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "google/gemma-4-26b-a4b-it:free",
   "openrouter/free", // OpenRouter сам выберет любую доступную бесплатную модель
 ];
+const TIMEOUT_MS = 12000; // если модель думает дольше, пробуем следующую
 
 const hits = new Map();
 
@@ -54,6 +55,7 @@ export default {
     for (const model of MODELS) {
       try {
         const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          signal: AbortSignal.timeout(TIMEOUT_MS),
           method: "POST",
           headers: {
             "Authorization": `Bearer ${env.OPENROUTER_KEY}`,
@@ -64,6 +66,8 @@ export default {
           body: JSON.stringify({
             model,
             temperature: 0.2,
+            max_tokens: 2000,
+            reasoning: { enabled: false, exclude: true }, // без долгих «размышлений»
             messages: [
               { role: "system", content: `You are a professional translator. Translate the user's text into ${to}. Keep meaning, tone, line breaks and formatting. Output only the translation, no comments.` },
               { role: "user", content: text },
