@@ -152,6 +152,15 @@ async function mymemory(text, a, b) {
 }
 
 // ---------- ИИ ----------
+// адрес посредника на Cloudflare (DeepSeek через OpenRouter). Пусто = не используется.
+const WORKER_URL = "";
+async function deepseek(text, b) {
+  const r = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, to: b }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.text) throw new Error("worker " + r.status + " " + (d.error || ""));
+  return { text: d.text, by: "ИИ" };
+}
 let aiFreeAt = 0; // когда снова можно звать ИИ (лимит бесплатного режима)
 async function ai(text, a, b) {
   const to = LANGS[b][0], from = a === "auto" ? "" : ` from ${LANGS[a][0]}`;
@@ -179,6 +188,10 @@ async function translateStep(text, a, b, useAi) {
   const key = `${useAi ? "ai" : "g"}|${a}|${b}|${text}`;
   if (done.has(key)) return done.get(key);
   let res;
+  if (useAi && WORKER_URL) {
+    try { res = await deepseek(text, b); done.set(key, res); return res; }
+    catch (e) { console.warn(e); }
+  }
   if (useAi) {
     if (Date.now() >= aiFreeAt) {
       try { res = await ai(text, a, b); done.set(key, res); return res; }
