@@ -153,7 +153,7 @@ async function mymemory(text, a, b) {
 
 // ---------- ИИ ----------
 // адрес посредника на Cloudflare (DeepSeek через OpenRouter). Пусто = не используется.
-const WORKER_URL = "";
+const WORKER_URL = "https://translater.noname15092025.workers.dev";
 async function deepseek(text, b) {
   const r = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, to: b }) });
