@@ -1,4 +1,4 @@
-// Посредник для переводчика: хранит ключ OpenRouter и переводит через бесплатные модели DeepSeek.
+// Посредник для переводчика: хранит ключ OpenRouter и переводит через бесплатные ИИ-модели.
 // Вставляется в Cloudflare Worker. Ключ добавляется в настройках воркера как секрет OPENROUTER_KEY.
 
 const ALLOWED_ORIGIN = "https://noname15092025-ctrl.github.io";
@@ -7,10 +7,10 @@ const PER_MINUTE = 6; // сколько переводов в минуту мо�
 
 // бесплатные модели пробуются по очереди: если одна недоступна, берётся следующая
 const MODELS = [
-  "deepseek/deepseek-chat-v3-0324:free",
-  "deepseek/deepseek-chat-v3.1:free",
-  "deepseek/deepseek-r1:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
+  "google/gemma-4-31b-it:free",
+  "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "openrouter/free", // OpenRouter сам выберет любую доступную бесплатную модель
 ];
 
 const hits = new Map();
@@ -49,6 +49,8 @@ export default {
     const to = body.to === "ru" ? "Russian" : "English";
     if (!text.trim()) return json({ error: "Пустой текст" }, 400, origin);
 
+    if (!env.OPENROUTER_KEY) return json({ error: "Не задан секрет OPENROUTER_KEY" }, 500, origin);
+    let lastError = "";
     for (const model of MODELS) {
       try {
         const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -68,13 +70,17 @@ export default {
             ],
           }),
         });
-        if (!r.ok) continue;
+        if (!r.ok) {
+          lastError = `${model}: ${r.status} ${(await r.text()).slice(0, 200)}`;
+          if (r.status === 401) return json({ error: "Ключ OpenRouter не подошёл", detail: lastError }, 500, origin);
+          continue;
+        }
         const d = await r.json();
         let out = d.choices?.[0]?.message?.content || "";
         out = out.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
         if (out) return json({ text: out, model }, 200, origin);
-      } catch { /* пробуем следующую модель */ }
+      } catch (e) { lastError = `${model}: ${e}`; }
     }
-    return json({ error: "Все бесплатные модели сейчас заняты" }, 503, origin);
+    return json({ error: "Все бесплатные модели сейчас заняты", detail: lastError }, 503, origin);
   },
 };
